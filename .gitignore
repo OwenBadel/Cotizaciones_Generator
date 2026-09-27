@@ -24,3 +24,7 @@ ENV/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Directivas agénticas y tooling local privado
+AGENTS.md
+.agents/
