@@ -514,6 +514,8 @@ class GeneradorCotizacionesWindow(QMainWindow):
     def actualizar_total_ui(self, *_):
         if self._actualizando:
             return
+        if not hasattr(self, "lbl_total_val") or not hasattr(self, "lbl_cap_total") or not hasattr(self, "tabs"):
+            return
         self._actualizando = True
         try:
             subtotal = 0.0

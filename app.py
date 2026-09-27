@@ -5,6 +5,12 @@ Para ejecutar la arquitectura modular, ver `main.py`.
 """
 
 import sys
+from PyQt5.QtCore import Qt, QCoreApplication
+
+# Requisito indispensable de QtWebEngine antes de inicializar QCoreApplication / QApplication
+QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+
+from PyQt5.QtWebEngineWidgets import QWebEngineView  # noqa: F401 - Preinicialización de WebEngine
 from PyQt5.QtWidgets import QApplication
 from ui.main_window import GeneradorCotizacionesWindow
 
