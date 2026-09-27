@@ -1,7 +1,7 @@
 # 💼 Generador Profesional de Cotizaciones y Cuentas de Cobro TI
 
 > **Autor:** Owen Badel Hooker — Ingeniero de Sistemas / Software Architect  
-> **Versión:** 2.0.0 — Arquitectura Limpia & Modular  
+> **Versión:** 2.1.0 — Arquitectura Limpia & Modular  
 > **Licencia:** Propietaria / Confidencial  
 
 ---
@@ -9,9 +9,11 @@
 ## 🎯 Descripción General
 **Generador Profesional de Cotizaciones y Cuentas de Cobro TI** es una aplicación de escritorio de grado corporativo desarrollada en **Python** y **PyQt5**. Diseñada específicamente para ingenieros de sistemas, consultores tecnológicos y contratistas de servicios de infraestructura, automatiza la liquidación, confección y exportación de:
 
-1. **Propuestas Técnicas y Comerciales (Cotizaciones TI):** Presentación formal de servicios, objetivos contractuales, viñetas detalladas, términos y condiciones de pago y tabla de costos.
-2. **Cuentas de Cobro Oficiales:** Formato estándar nacional con numeración consecutiva autoincremental, especificación contractual, período de ejecución, datos bancarios para transferencia, declaración juramentada de no sujeción a IVA (Art. 437 del Estatuto Tributario), firma digitalizada en Base64 y monto en letras en pesos colombianos ("PESOS M/CTE").
-3. **Exportación Corporativa a Excel (.xlsx):** Generación automática de libros de cálculo con diseño ejecutivo en azul marino, formato monetario contable y fórmulas de suma integradas mediante `openpyxl`.
+1. **Propuestas Técnicas y Comerciales (Cotizaciones TI):** Presentación formal de servicios, objetivos contractuales, viñetas detalladas, términos y condiciones de pago, vigencia de la oferta, descuentos comerciales porcentuales e IVA discriminado (19%).
+2. **Cuentas de Cobro Oficiales:** Formato estándar nacional con numeración consecutiva autoincremental, especificación contractual, período de ejecución, datos bancarios para transferencia, deducciones de retención en la fuente y ReteICA opcionales, declaración juramentada de no sujeción a IVA (Art. 437 del Estatuto Tributario), firma digitalizada en Base64 y monto en letras en pesos colombianos ("PESOS M/CTE").
+3. **Catálogo de Servicios TI Integrado:** Selector preconfigurado de 8 servicios tecnológicos estándar (mantenimiento preventivo, cableado estructurado Cat 6/6A, configuración de routers Wi-Fi 6 Mesh, switches VLANs, ciberseguridad perimetral y horas de desarrollo de software) con carga inmediata en 1 clic.
+4. **Previsualización Instantánea en Navegador:** Botón de inspección que compila el documento HTML/CSS y lo despliega directamente en el navegador web predeterminado del sistema antes de exportar a PDF o Excel.
+5. **Exportación Corporativa a Excel (.xlsx):** Generación automática de libros de cálculo con diseño ejecutivo en azul marino, formato monetario contable y fórmulas de suma integradas mediante `openpyxl` tanto para Cotizaciones como para Cuentas de Cobro.
 
 ---
 
@@ -22,6 +24,7 @@ El sistema implementa **Clean Architecture**, eliminando los archivos monolític
 ```mermaid
 graph TD
     UI["🖥️ Capa de Presentación (PyQt5 / QSS - ui/main_window.py)"]
+    Catalog["⚡ Catálogo de Servicios TI (core/catalog.py)"]
     Models["📦 Modelos Tipados (core/models.py)"]
     Currency["💰 Motor de Moneda y Letras (core/currency.py)"]
     Templates["📑 Plantillas HTML/CSS (templates/)"]
@@ -29,6 +32,7 @@ graph TD
     Excel["📊 Servicio Excel (services/excel_service.py - openpyxl)"]
     Config["⚙️ Persistencia Atómica (core/config_manager.py)"]
 
+    UI --> Catalog
     UI --> Models
     UI --> Templates
     UI --> PDF
@@ -51,6 +55,7 @@ Cotizaciones Generator/
 ├── app.py                          # Lanzador de retrocompatibilidad
 ├── core/                           # Lógica central del dominio
 │   ├── __init__.py
+│   ├── catalog.py                  # Catálogo de servicios tecnológicos preconfigurados
 │   ├── models.py                   # Dataclasses para ítems, cotizaciones y cobros
 │   ├── currency.py                 # Algoritmo de números a letras y formato monetario
 │   ├── config_manager.py           # Guardado seguro con reemplazo atómico
@@ -62,7 +67,7 @@ Cotizaciones Generator/
 ├── services/                       # Servicios de infraestructura
 │   ├── __init__.py
 │   ├── pdf_service.py              # Renderizado vectorial asíncrono a PDF A4
-│   └── excel_service.py            # Generación de hojas de cálculo .xlsx
+│   └── excel_service.py            # Generación de hojas de cálculo .xlsx (Cotización y Cobro)
 ├── ui/                             # Interfaz gráfica
 │   ├── __init__.py
 │   ├── main_window.py              # Controlador de ventana principal
@@ -70,7 +75,7 @@ Cotizaciones Generator/
 └── tests/                          # Suite automatizada de pruebas unitarias
     ├── __init__.py
     ├── test_currency.py            # Validación de conversión monetaria
-    └── test_models.py              # Validación de modelos y Excel
+    └── test_models.py              # Validación de modelos, deducciones, catálogo y Excel
 ```
 
 ---

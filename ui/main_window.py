@@ -1,10 +1,13 @@
 """
 Ventana Principal de la Suite: Generador Profesional de Cotizaciones y Cuentas de Cobro.
+Arquitectura desacoplada, diseño corporativo Navy Blue y catálogo de servicios TI.
 Autor: Owen Badel Hooker — Ingeniero de Sistemas
 """
 
 import os
 import sys
+import tempfile
+import webbrowser
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
@@ -15,26 +18,25 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDate
 
 from core.models import ItemCotizacion, DatosCotizacion, DatosCuentaCobro
-from core.currency import (
-    formato_moneda_colombiana, parsear_valor_moneda
-)
+from core.currency import formato_moneda_colombiana, parsear_valor_moneda
 from core.config_manager import cargar_configuracion, guardar_configuracion
 from core.utils import sanitizar_nombre_archivo, incrementar_consecutivo
+from core.catalog import CATALOGO_SERVICIOS_TI
 from templates.cotizacion_template import render_cotizacion_html
 from templates.cuenta_cobro_template import render_cuenta_cobro_html
 from services.pdf_service import PDFRenderService
-from services.excel_service import exportar_cotizacion_excel
+from services.excel_service import exportar_cotizacion_excel, exportar_cuenta_cobro_excel
 from .styles import APP_QSS
 
 
 class GeneradorCotizacionesWindow(QMainWindow):
-    """Ventana principal para la gestión y exportación de propuestas y cuentas de cobro."""
+    """Ventana principal para la gestión, liquidación y exportación de propuestas y cuentas de cobro."""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Generador Profesional de Cotizaciones y Cuentas de Cobro TI — Owen Badel Hooker")
-        self.resize(1080, 920)
-        self.setMinimumWidth(880)
+        self.resize(1120, 940)
+        self.setMinimumWidth(900)
 
         self._actualizando = False
         self._current_doc_type = "Cotización"
@@ -52,14 +54,14 @@ class GeneradorCotizacionesWindow(QMainWindow):
         central.setObjectName("central")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(10)
 
         # 1. Header Banner
         header = QFrame()
         header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(22, 14, 22, 14)
+        header_layout.setContentsMargins(22, 12, 22, 12)
 
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
@@ -77,9 +79,10 @@ class GeneradorCotizacionesWindow(QMainWindow):
         self.tabs = QTabWidget()
         self._setup_tab_cotizacion()
         self._setup_tab_cuenta_cobro()
+        self.tabs.currentChanged.connect(self.actualizar_total_ui)
         root.addWidget(self.tabs)
 
-        # 3. Items Table
+        # 3. Items Table y Catálogo
         self._setup_items_table(root)
 
         # 4. Footer & Action Buttons
@@ -91,13 +94,14 @@ class GeneradorCotizacionesWindow(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(14)
 
-        # Meta Cliente / Emisor
-        group_meta = QGroupBox("Datos del Cliente y Emisor")
+        # Meta Cliente / Emisor y Liquidación Comercial
+        group_meta = QGroupBox("Datos del Cliente, Emisor y Liquidación Comercial")
         form = QFormLayout(group_meta)
         form.setContentsMargins(10, 10, 10, 6)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(8)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(7)
 
+        self.input_consecutivo_cot = QLineEdit(self.config.get("consecutivo_cotizacion", "COT-001"))
         self.input_cliente = QLineEdit(self.config.get("cliente_defecto", "I.E. Técnica de Pasacaballos"))
         self.input_emisor = QLineEdit(self.config.get("emisor", "Owen Badel Hooker"))
         self.input_rut = QLineEdit(self.config.get("rut", "1.047.503.800"))
@@ -108,15 +112,41 @@ class GeneradorCotizacionesWindow(QMainWindow):
         self.combo_pago.addItem("Pago contra entrega (100%)")
         self.combo_pago.addItem("No incluir forma de pago")
 
+        # Vigencia y Descuento / IVA
+        box_comercial = QHBoxLayout()
+        self.spin_vigencia = QSpinBox()
+        self.spin_vigencia.setRange(1, 365)
+        self.spin_vigencia.setValue(15)
+        self.spin_vigencia.setSuffix(" días")
+
+        self.spin_descuento = QDoubleSpinBox()
+        self.spin_descuento.setRange(0.0, 100.0)
+        self.spin_descuento.setValue(0.0)
+        self.spin_descuento.setSingleStep(1.0)
+        self.spin_descuento.setSuffix(" %")
+        self.spin_descuento.valueChanged.connect(self.actualizar_total_ui)
+
+        self.check_iva = QCheckBox("Aplicar IVA (19%)")
+        self.check_iva.setChecked(False)
+        self.check_iva.stateChanged.connect(self.actualizar_total_ui)
+
+        box_comercial.addWidget(QLabel("Validez:"))
+        box_comercial.addWidget(self.spin_vigencia)
+        box_comercial.addWidget(QLabel("Descuento:"))
+        box_comercial.addWidget(self.spin_descuento)
+        box_comercial.addWidget(self.check_iva)
+
+        form.addRow("N° Consecutivo:", self.input_consecutivo_cot)
         form.addRow("Cliente:", self.input_cliente)
         form.addRow("Preparado Por:", self.input_emisor)
         form.addRow("NIT / RUT:", self.input_rut)
         form.addRow("Fecha:", self.input_fecha)
         form.addRow("Forma de Pago:", self.combo_pago)
+        form.addRow("Condiciones:", box_comercial)
         layout.addWidget(group_meta, stretch=1)
 
         # Objetivo y Detalle
-        group_obj = QGroupBox("Objetivo y Detalle del Servicio")
+        group_obj = QGroupBox("Objetivo y Alcance Técnico de la Propuesta")
         layout_obj = QVBoxLayout(group_obj)
         layout_obj.setContentsMargins(10, 10, 10, 6)
         layout_obj.setSpacing(6)
@@ -136,7 +166,7 @@ class GeneradorCotizacionesWindow(QMainWindow):
             "• Equipos de Red y Configuración: Switch TP-Link Gigabit y puntos de acceso configurados.\n"
             "• Soporte Técnico a Impresoras: Instalación de controladores y calibración."
         )
-        self.input_detalle.setMaximumHeight(75)
+        self.input_detalle.setMaximumHeight(85)
 
         layout_obj.addWidget(lbl_obj)
         layout_obj.addWidget(self.input_objetivo)
@@ -182,7 +212,7 @@ class GeneradorCotizacionesWindow(QMainWindow):
         layout.addWidget(group_meta, stretch=1)
 
         # Datos Bancarios y Tributarios
-        group_banco = QGroupBox("Datos del Contratante, Banco y Firma")
+        group_banco = QGroupBox("Datos del Contratante, Banco y Retenciones")
         form_banco = QFormLayout(group_banco)
         form_banco.setContentsMargins(10, 10, 10, 6)
         form_banco.setHorizontalSpacing(10)
@@ -207,6 +237,35 @@ class GeneradorCotizacionesWindow(QMainWindow):
         self.input_num_cuenta_banco = QLineEdit(self.config.get("numero_cuenta", "67800017891"))
         self.input_titular_cuenta = QLineEdit(self.config.get("titular", self.input_emisor.text()))
 
+        # Retenciones opcionales
+        box_retenciones = QHBoxLayout()
+        self.check_retefuente = QCheckBox("Retefuente")
+        self.check_retefuente.setChecked(False)
+        self.spin_retefuente = QDoubleSpinBox()
+        self.spin_retefuente.setRange(0.0, 20.0)
+        self.spin_retefuente.setValue(4.0)
+        self.spin_retefuente.setSuffix(" %")
+        self.spin_retefuente.setFixedWidth(75)
+
+        self.check_reteica = QCheckBox("ReteICA")
+        self.check_reteica.setChecked(False)
+        self.spin_reteica = QDoubleSpinBox()
+        self.spin_reteica.setRange(0.0, 10.0)
+        self.spin_reteica.setDecimals(3)
+        self.spin_reteica.setValue(0.966)
+        self.spin_reteica.setSuffix(" %")
+        self.spin_reteica.setFixedWidth(85)
+
+        self.check_retefuente.stateChanged.connect(self.actualizar_total_ui)
+        self.spin_retefuente.valueChanged.connect(self.actualizar_total_ui)
+        self.check_reteica.stateChanged.connect(self.actualizar_total_ui)
+        self.spin_reteica.valueChanged.connect(self.actualizar_total_ui)
+
+        box_retenciones.addWidget(self.check_retefuente)
+        box_retenciones.addWidget(self.spin_retefuente)
+        box_retenciones.addWidget(self.check_reteica)
+        box_retenciones.addWidget(self.spin_reteica)
+
         box_checks = QHBoxLayout()
         self.check_tributario = QCheckBox("Decl. No IVA (Art. 437)")
         self.check_tributario.setChecked(self.config.get("incluir_tributario", True))
@@ -228,6 +287,7 @@ class GeneradorCotizacionesWindow(QMainWindow):
         form_banco.addRow("Tipo de Cuenta:", self.combo_tipo_cuenta)
         form_banco.addRow("N° Cuenta Bancaria:", self.input_num_cuenta_banco)
         form_banco.addRow("Titular Cuenta:", self.input_titular_cuenta)
+        form_banco.addRow("Deducciones Trib.:", box_retenciones)
         form_banco.addRow("Opciones:", box_checks)
         layout.addWidget(group_banco, stretch=1)
 
@@ -239,11 +299,34 @@ class GeneradorCotizacionesWindow(QMainWindow):
         self.input_emisor.textChanged.connect(lambda txt: self.input_titular_cuenta.setText(txt))
 
     def _setup_items_table(self, root: QVBoxLayout):
-        group_items = QGroupBox("Ítems y Conceptos de la Propuesta / Cobro")
+        group_items = QGroupBox("Ítems de la Propuesta / Cobro y Catálogo de Servicios TI")
         layout = QVBoxLayout(group_items)
         layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
+        # Fila de Catálogo Rápido
+        catalog_row = QHBoxLayout()
+        catalog_row.setSpacing(8)
+        lbl_cat = QLabel("⚡ Catálogo de Servicios TI:")
+        lbl_cat.setStyleSheet("font-weight: 700; color: #1E3A8A;")
+
+        self.combo_catalogo = QComboBox()
+        self.combo_catalogo.addItem("-- Seleccionar servicio preconfigurado del catálogo --", None)
+        for serv in CATALOGO_SERVICIOS_TI:
+            lbl_item = f"[{serv.categoria}] {serv.descripcion[:55]}... (${formato_moneda_colombiana(serv.precio_sugerido)})"
+            self.combo_catalogo.addItem(lbl_item, serv)
+        self.combo_catalogo.currentIndexChanged.connect(self._on_catalogo_seleccionado)
+
+        btn_cargar_cat = QPushButton("📥 Cargar en Formulario")
+        btn_cargar_cat.setCursor(Qt.PointingHandCursor)
+        btn_cargar_cat.clicked.connect(self._cargar_servicio_catalogo)
+
+        catalog_row.addWidget(lbl_cat)
+        catalog_row.addWidget(self.combo_catalogo, stretch=1)
+        catalog_row.addWidget(btn_cargar_cat)
+        layout.addLayout(catalog_row)
+
+        # Tabla de Ítems
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Descripción", "Cantidad", "Valor Unitario ($)", "Valor Total ($)"])
         tbl_header = self.table.horizontalHeader()
@@ -252,13 +335,13 @@ class GeneradorCotizacionesWindow(QMainWindow):
             tbl_header.setSectionResizeMode(col, QHeaderView.Interactive)
             tbl_header.resizeSection(col, ancho)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.itemChanged.connect(self.actualizar_total_ui)
         layout.addWidget(self.table)
 
-        # Fila de adición rápida
+        # Fila de adición manual rápida
         add_row = QHBoxLayout()
         self.item_desc = QLineEdit()
         self.item_desc.setPlaceholderText("Descripción del ítem/servicio prestado...")
@@ -268,18 +351,18 @@ class GeneradorCotizacionesWindow(QMainWindow):
         self.item_cant.setRange(1, 1000)
         self.item_cant.setValue(1)
         self.item_cant.setAlignment(Qt.AlignCenter)
-        self.item_cant.setFixedWidth(90)
+        self.item_cant.setFixedWidth(85)
 
         self.item_precio = QDoubleSpinBox()
         self.item_precio.setRange(0, 100000000)
         self.item_precio.setSingleStep(5000)
         self.item_precio.setPrefix("$ ")
         self.item_precio.setAlignment(Qt.AlignRight)
-        self.item_precio.setFixedWidth(150)
+        self.item_precio.setFixedWidth(140)
         self.item_precio.setValue(150000)
         self.item_precio.lineEdit().returnPressed.connect(self.agregar_item)
 
-        btn_add = QPushButton("➕ Añadir")
+        btn_add = QPushButton("➕ Añadir a la Lista")
         btn_add.setObjectName("btnAdd")
         btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.clicked.connect(self.agregar_item)
@@ -301,26 +384,44 @@ class GeneradorCotizacionesWindow(QMainWindow):
         # Ítem por defecto si la tabla está vacía
         self._insertar_fila("Mantenimiento preventivo integral y soporte técnico de redes", 1, 800000)
 
+    def _on_catalogo_seleccionado(self, index: int):
+        serv = self.combo_catalogo.itemData(index)
+        if serv:
+            self.item_desc.setText(serv.descripcion)
+            self.item_cant.setValue(serv.cantidad_defecto)
+            self.item_precio.setValue(serv.precio_sugerido)
+
+    def _cargar_servicio_catalogo(self):
+        serv = self.combo_catalogo.currentData()
+        if serv:
+            self._insertar_fila(serv.descripcion, serv.cantidad_defecto, serv.precio_sugerido)
+            self.actualizar_total_ui()
+
     def _setup_footer_actions(self, root: QVBoxLayout):
         footer = QFrame()
         footer.setObjectName("footerBar")
         footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(18, 12, 18, 12)
+        footer_layout.setContentsMargins(18, 10, 18, 10)
 
-        # Total Indicator
+        # Indicador de Total
         box_total = QVBoxLayout()
         box_total.setSpacing(1)
-        lbl_cap = QLabel("TOTAL GENERAL LIQUIDADO")
-        lbl_cap.setObjectName("totalCaption")
+        self.lbl_cap_total = QLabel("TOTAL GENERAL LIQUIDADO")
+        self.lbl_cap_total.setObjectName("totalCaption")
         self.lbl_total_val = QLabel("$0 COP")
         self.lbl_total_val.setObjectName("totalValue")
-        box_total.addWidget(lbl_cap)
+        box_total.addWidget(self.lbl_cap_total)
         box_total.addWidget(self.lbl_total_val)
         footer_layout.addLayout(box_total)
 
         footer_layout.addStretch()
 
-        # Action Buttons
+        # Botones de Acción
+        btn_preview = QPushButton("👁️ Previsualizar en Navegador")
+        btn_preview.setObjectName("btnPreview")
+        btn_preview.setCursor(Qt.PointingHandCursor)
+        btn_preview.clicked.connect(self.previsualizar_en_navegador)
+
         btn_excel = QPushButton("📊 Exportar Excel (.xlsx)")
         btn_excel.setObjectName("btnExcel")
         btn_excel.setCursor(Qt.PointingHandCursor)
@@ -336,6 +437,7 @@ class GeneradorCotizacionesWindow(QMainWindow):
         btn_gen_cc.setCursor(Qt.PointingHandCursor)
         btn_gen_cc.clicked.connect(self.generar_cuenta_cobro_pdf)
 
+        footer_layout.addWidget(btn_preview)
         footer_layout.addWidget(btn_excel)
         footer_layout.addWidget(btn_gen_cot)
         footer_layout.addWidget(btn_gen_cc)
@@ -409,15 +511,12 @@ class GeneradorCotizacionesWindow(QMainWindow):
             items.append(ItemCotizacion(descripcion=desc, cantidad=cant, precio_unitario=val_u))
         return items
 
-    def calcular_total(self) -> float:
-        return sum(item.total for item in self._obtener_items())
-
     def actualizar_total_ui(self, *_):
         if self._actualizando:
             return
         self._actualizando = True
         try:
-            total = 0.0
+            subtotal = 0.0
             for r in range(self.table.rowCount()):
                 try:
                     cant = int(self.table.item(r, 1).text()) if self.table.item(r, 1) else 1
@@ -425,66 +524,51 @@ class GeneradorCotizacionesWindow(QMainWindow):
                     cant = 1
                 val_u = parsear_valor_moneda(self.table.item(r, 2).text() if self.table.item(r, 2) else "0")
                 row_total = val_u * cant
-                total += row_total
+                subtotal += row_total
                 total_item = self.table.item(r, 3)
                 if total_item:
                     total_item.setText(formato_moneda_colombiana(row_total))
 
-            self.lbl_total_val.setText(f"{formato_moneda_colombiana(total, con_cop=True)}")
+            tab_index = self.tabs.currentIndex()
+            if tab_index == 0:
+                # Pestaña Cotización: Descuento comercial e IVA
+                desc_pct = self.spin_descuento.value()
+                desc_val = subtotal * (desc_pct / 100.0) if desc_pct > 0 else 0.0
+                base = subtotal - desc_val
+                iva_val = base * 0.19 if self.check_iva.isChecked() else 0.0
+                total_neto = base + iva_val
+                self.lbl_cap_total.setText(f"TOTAL PROPUESTA (Sub: {formato_moneda_colombiana(subtotal)})")
+                self.lbl_total_val.setText(f"{formato_moneda_colombiana(total_neto, con_cop=True)}")
+            else:
+                # Pestaña Cuenta de Cobro: Retenciones
+                ret_fte = (subtotal * (self.spin_retefuente.value() / 100.0)) if self.check_retefuente.isChecked() else 0.0
+                ret_ica = (subtotal * (self.spin_reteica.value() / 100.0)) if self.check_reteica.isChecked() else 0.0
+                total_neto = subtotal - (ret_fte + ret_ica)
+                self.lbl_cap_total.setText(f"TOTAL NETO A PAGAR (Bruto: {formato_moneda_colombiana(subtotal)})")
+                self.lbl_total_val.setText(f"{formato_moneda_colombiana(total_neto, con_cop=True)}")
         finally:
             self._actualizando = False
 
-    def generar_cotizacion_pdf(self):
-        items = self._obtener_items()
-        if not items:
-            QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem a la propuesta.")
-            return
-
-        cliente_sani = sanitizar_nombre_archivo(self.input_cliente.text())
-        fecha_sani = sanitizar_nombre_archivo(self.input_fecha.text())
-        nombre_defecto = f"Cotizacion_{cliente_sani}_{fecha_sani}.pdf"
-
-        filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Cotización PDF", nombre_defecto, "PDF Files (*.pdf)")
-        if not filepath:
-            return
-        if not filepath.endswith(".pdf"):
-            filepath += ".pdf"
-
-        datos = DatosCotizacion(
+    def _construir_datos_cotizacion(self) -> DatosCotizacion:
+        return DatosCotizacion(
             cliente=self.input_cliente.text().strip(),
             emisor=self.input_emisor.text().strip(),
             rut_emisor=self.input_rut.text().strip(),
             fecha=self.input_fecha.text().strip(),
+            consecutivo=self.input_consecutivo_cot.text().strip() or "COT-001",
             forma_pago=self.combo_pago.currentText(),
+            vigencia_dias=self.spin_vigencia.value(),
             objetivo_servicio=self.input_objetivo.text().strip(),
             detalle_servicios=self.input_detalle.toPlainText().strip(),
-            items=items
+            descuento_porcentaje=self.spin_descuento.value(),
+            aplicar_iva=self.check_iva.isChecked(),
+            items=self._obtener_items()
         )
 
-        html_content = render_cotizacion_html(datos)
-        self._current_doc_type = "Cotización"
-        self.pdf_service.exportar_pdf(html_content, filepath, self._on_pdf_generado)
-
-    def generar_cuenta_cobro_pdf(self):
-        items = self._obtener_items()
-        if not items:
-            QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem a la cuenta de cobro.")
-            return
-
-        num_cuenta = self.input_num_cuenta.text().strip() or "001"
-        cliente_sani = sanitizar_nombre_archivo(self.input_cliente.text())
-        nombre_defecto = f"Cuenta_Cobro_{num_cuenta}_{cliente_sani}.pdf"
-
-        filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Cuenta de Cobro PDF", nombre_defecto, "PDF Files (*.pdf)")
-        if not filepath:
-            return
-        if not filepath.endswith(".pdf"):
-            filepath += ".pdf"
-
+    def _construir_datos_cuenta_cobro(self) -> DatosCuentaCobro:
         firma_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "firma.png")
-
-        datos = DatosCuentaCobro(
-            num_cuenta=num_cuenta,
+        return DatosCuentaCobro(
+            num_cuenta=self.input_num_cuenta.text().strip() or "001",
             num_contrato=self.input_num_contrato.text().strip(),
             periodo_ejecucion=self.input_periodo.text().strip(),
             periodo_largo=self.input_periodo_largo.text().strip(),
@@ -505,9 +589,77 @@ class GeneradorCotizacionesWindow(QMainWindow):
             titular_cuenta=self.input_titular_cuenta.text().strip(),
             incluir_tributario=self.check_tributario.isChecked(),
             incluir_firma=self.check_firma.isChecked(),
+            aplicar_retefuente=self.check_retefuente.isChecked(),
+            retefuente_porcentaje=self.spin_retefuente.value(),
+            aplicar_reteica=self.check_reteica.isChecked(),
+            reteica_porcentaje=self.spin_reteica.value(),
             ruta_firma=firma_path if os.path.exists(firma_path) else None,
-            items=items
+            items=self._obtener_items()
         )
+
+    def previsualizar_en_navegador(self):
+        """Genera el HTML y lo abre de inmediato en el navegador predeterminado para inspección."""
+        items = self._obtener_items()
+        if not items:
+            QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem para previsualizar el documento.")
+            return
+
+        is_cotizacion = self.tabs.currentIndex() == 0
+        if is_cotizacion:
+            datos = self._construir_datos_cotizacion()
+            html_content = render_cotizacion_html(datos)
+            prefijo = "previsualizacion_cotizacion"
+        else:
+            datos = self._construir_datos_cuenta_cobro()
+            html_content = render_cuenta_cobro_html(datos)
+            prefijo = "previsualizacion_cuenta_cobro"
+
+        temp_dir = tempfile.gettempdir()
+        temp_file = os.path.join(temp_dir, f"{prefijo}.html")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        webbrowser.open_new_tab(f"file:///{os.path.normpath(temp_file)}")
+
+    def generar_cotizacion_pdf(self):
+        items = self._obtener_items()
+        if not items:
+            QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem a la propuesta.")
+            return
+
+        cliente_sani = sanitizar_nombre_archivo(self.input_cliente.text())
+        fecha_sani = sanitizar_nombre_archivo(self.input_fecha.text())
+        consec_sani = sanitizar_nombre_archivo(self.input_consecutivo_cot.text().strip() or "COT-001")
+        nombre_defecto = f"{consec_sani}_{cliente_sani}_{fecha_sani}.pdf"
+
+        filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Cotización PDF", nombre_defecto, "PDF Files (*.pdf)")
+        if not filepath:
+            return
+        if not filepath.endswith(".pdf"):
+            filepath += ".pdf"
+
+        datos = self._construir_datos_cotizacion()
+        html_content = render_cotizacion_html(datos)
+        self._current_doc_type = "Cotización"
+        self.pdf_service.exportar_pdf(html_content, filepath, self._on_pdf_generado)
+
+    def generar_cuenta_cobro_pdf(self):
+        items = self._obtener_items()
+        if not items:
+            QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem a la cuenta de cobro.")
+            return
+
+        num_cuenta = self.input_num_cuenta.text().strip() or "001"
+        cliente_sani = sanitizar_nombre_archivo(self.input_cliente.text())
+        nombre_defecto = f"Cuenta_Cobro_{num_cuenta}_{cliente_sani}.pdf"
+
+        filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Cuenta de Cobro PDF", nombre_defecto, "PDF Files (*.pdf)")
+        if not filepath:
+            return
+        if not filepath.endswith(".pdf"):
+            filepath += ".pdf"
+
+        datos = self._construir_datos_cuenta_cobro()
 
         # Autoincrementar consecutivo para el siguiente documento
         nuevo_consecutivo = incrementar_consecutivo(num_cuenta)
@@ -525,28 +677,31 @@ class GeneradorCotizacionesWindow(QMainWindow):
             QMessageBox.warning(self, "Advertencia", "Añade al menos un ítem para exportar a Excel.")
             return
 
+        is_cotizacion = self.tabs.currentIndex() == 0
         cliente_sani = sanitizar_nombre_archivo(self.input_cliente.text())
-        nombre_defecto = f"Propuesta_{cliente_sani}.xlsx"
 
-        filepath, _ = QFileDialog.getSaveFileName(self, "Guardar Libro de Excel", nombre_defecto, "Excel Files (*.xlsx)")
+        if is_cotizacion:
+            nombre_defecto = f"Propuesta_{cliente_sani}.xlsx"
+            titulo_dialogo = "Guardar Propuesta en Excel"
+        else:
+            num_cc = self.input_num_cuenta.text().strip() or "001"
+            nombre_defecto = f"Cuenta_Cobro_{num_cc}_{cliente_sani}.xlsx"
+            titulo_dialogo = "Guardar Cuenta de Cobro en Excel"
+
+        filepath, _ = QFileDialog.getSaveFileName(self, titulo_dialogo, nombre_defecto, "Excel Files (*.xlsx)")
         if not filepath:
             return
         if not filepath.endswith(".xlsx"):
             filepath += ".xlsx"
 
-        datos = DatosCotizacion(
-            cliente=self.input_cliente.text().strip(),
-            emisor=self.input_emisor.text().strip(),
-            rut_emisor=self.input_rut.text().strip(),
-            fecha=self.input_fecha.text().strip(),
-            forma_pago=self.combo_pago.currentText(),
-            objetivo_servicio=self.input_objetivo.text().strip(),
-            detalle_servicios=self.input_detalle.toPlainText().strip(),
-            items=items
-        )
-
         try:
-            exportar_cotizacion_excel(datos, filepath)
+            if is_cotizacion:
+                datos_cot = self._construir_datos_cotizacion()
+                exportar_cotizacion_excel(datos_cot, filepath)
+            else:
+                datos_cc = self._construir_datos_cuenta_cobro()
+                exportar_cuenta_cobro_excel(datos_cc, filepath)
+
             msg = QMessageBox(self)
             msg.setWindowTitle("Excel Exportado con Éxito")
             msg.setIcon(QMessageBox.Information)
@@ -580,6 +735,7 @@ class GeneradorCotizacionesWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Ocurrió un error al generar el PDF ({self._current_doc_type}).")
 
     def _guardar_configuracion_actual(self):
+        self.config["consecutivo_cotizacion"] = self.input_consecutivo_cot.text().strip()
         self.config["cliente_defecto"] = self.input_cliente.text().strip()
         self.config["nit_cliente"] = self.input_nit_cliente.text().strip()
         self.config["ciudad_cliente"] = self.input_ciudad_cliente.text().strip()

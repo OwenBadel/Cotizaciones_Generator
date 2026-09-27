@@ -1,5 +1,6 @@
 """
 Plantilla HTML/CSS de alta fidelidad para Cotización / Propuesta Técnica TI.
+Soporta descuentos comerciales, IVA discriminado, vigencia y consecutivo.
 Autor: Owen Badel Hooker — Ingeniero de Sistemas
 """
 
@@ -44,27 +45,23 @@ def render_cotizacion_html(datos: DatosCotizacion) -> str:
     seccion_cotizacion_num = num_seccion
     num_seccion += 1
 
-    seccion_pago_html = ""
+    pago_desc = ""
     if datos.forma_pago == "50% anticipo y 50% al finalizar":
-        seccion_pago_html = f"""
-        <div class="block-group">
-            <h2>{num_seccion}. Términos y Condiciones</h2>
-            <div class="terms-box">
-                <p><strong>Forma de Pago:</strong> 50% de anticipo al momento de la firma/aprobación de la propuesta (para la compra de insumos y equipos de red) y 50% restante al finalizar las actividades.</p>
-            </div>
-        </div>
-        """
-        num_seccion += 1
+        pago_desc = "50% de anticipo al momento de la aprobación de la propuesta y 50% restante al finalizar las actividades a satisfacción."
     elif datos.forma_pago == "Pago contra entrega (100%)":
-        seccion_pago_html = f"""
-        <div class="block-group">
-            <h2>{num_seccion}. Términos y Condiciones</h2>
-            <div class="terms-box">
-                <p><strong>Forma de Pago:</strong> 100% contra entrega a entera satisfacción del cliente una vez finalizadas las actividades y entregados los servicios/equipos.</p>
-            </div>
+        pago_desc = "100% contra entrega a entera satisfacción del cliente una vez finalizadas las actividades y entregados los servicios."
+    else:
+        pago_desc = html.escape(datos.forma_pago)
+
+    seccion_terminos_html = f"""
+    <div class="block-group">
+        <h2>{num_seccion}. Términos Comerciales y Validez</h2>
+        <div class="terms-box">
+            <p><strong>Forma de Pago:</strong> {pago_desc}</p>
+            <p style="margin-top: 5px;"><strong>Vigencia de la Oferta:</strong> {datos.vigencia_dias} días calendario a partir de la fecha de emisión.</p>
         </div>
-        """
-        num_seccion += 1
+    </div>
+    """
 
     rows_html = ""
     for idx, item in enumerate(datos.items, 1):
@@ -77,6 +74,39 @@ def render_cotizacion_html(datos: DatosCotizacion) -> str:
             <td class="text-right">{item.total_formateado}</td>
         </tr>
         """
+
+    # Filas de liquidación (Subtotal, Descuento, IVA, Total)
+    filas_totales_html = ""
+    if datos.descuento_porcentaje > 0 or datos.aplicar_iva:
+        filas_totales_html += f"""
+        <tr class="subtotal-row">
+            <td colspan="3" class="text-right">SUBTOTAL</td>
+            <td colspan="2" class="text-right">{datos.subtotal_formateado}</td>
+        </tr>
+        """
+
+    if datos.descuento_porcentaje > 0:
+        filas_totales_html += f"""
+        <tr class="discount-row">
+            <td colspan="3" class="text-right">DESCUENTO COMERCIAL ({datos.descuento_porcentaje:.1f}%)</td>
+            <td colspan="2" class="text-right">-{datos.descuento_formateado}</td>
+        </tr>
+        """
+
+    if datos.aplicar_iva:
+        filas_totales_html += f"""
+        <tr class="tax-row">
+            <td colspan="3" class="text-right">IVA ({datos.iva_porcentaje:.0f}%)</td>
+            <td colspan="2" class="text-right">+{datos.iva_formateado}</td>
+        </tr>
+        """
+
+    filas_totales_html += f"""
+    <tr class="total-row">
+        <td colspan="3" class="text-right"><strong>TOTAL PROPUESTA</strong></td>
+        <td colspan="2" class="text-right"><strong>{datos.total_formateado} COP</strong></td>
+    </tr>
+    """
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -122,13 +152,16 @@ def render_cotizacion_html(datos: DatosCotizacion) -> str:
     table.pricing-table thead {{ display: table-header-group; }}
     table.pricing-table tr {{ page-break-inside: avoid; }}
     table.pricing-table th {{ background-color: #1e293b; color: #ffffff; font-weight: 600; text-align: left; padding: 9px 11px; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.5px; }}
-    table.pricing-table td {{ padding: 9px 11px; border-bottom: 1px solid #f1f5f9; color: #334155; font-size: 9pt; word-wrap: break-word; overflow-wrap: break-word; }}
+    table.pricing-table td {{ padding: 8px 11px; border-bottom: 1px solid #f1f5f9; color: #334155; font-size: 9pt; word-wrap: break-word; overflow-wrap: break-word; }}
     table.pricing-table tr:nth-child(even) td {{ background-color: #f8fafc; }}
     .text-center {{ text-align: center; }}
     .text-right {{ text-align: right; }}
+    .subtotal-row td {{ background-color: #f8fafc !important; font-weight: 600; color: #475569; }}
+    .discount-row td {{ background-color: #fff1f2 !important; font-weight: 600; color: #be123c; }}
+    .tax-row td {{ background-color: #f0fdf4 !important; font-weight: 600; color: #15803d; }}
     .total-row td {{ background-color: #eff6ff !important; font-weight: 700; color: #1e3a8a; font-size: 10.5pt; border-top: 2px solid #2563eb; }}
-    .terms-box {{ background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; padding: 12px 14px; border-radius: 8px; page-break-inside: avoid; }}
-    .terms-box p {{ color: #166534; margin: 0; font-weight: 500; }}
+    .terms-box {{ background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #2563eb; padding: 12px 14px; border-radius: 8px; page-break-inside: avoid; }}
+    .terms-box p {{ color: #334155; margin: 0; font-size: 9pt; }}
     .footer-signature {{ margin-top: 30px; padding-top: 12px; border-top: 1px solid #cbd5e1; width: 220px; page-break-inside: avoid; }}
     .signature-line {{ font-weight: 700; color: #0f172a; line-height: 1.3; }}
     .signature-title {{ font-size: 8.5pt; color: #64748b; line-height: 1.3; }}
@@ -137,7 +170,7 @@ def render_cotizacion_html(datos: DatosCotizacion) -> str:
 <body>
     <div class="block-group">
         <div class="header-banner">
-            <div class="header-title">Propuesta Técnica SERVICIOS TI</div>
+            <div class="header-title">Propuesta Técnica SERVICIOS TI — {html.escape(datos.consecutivo)}</div>
             <div class="header-subtitle">Servicios Tecnológicos de Infraestructura y Redes</div>
         </div>
         <table class="meta-grid">
@@ -166,15 +199,12 @@ def render_cotizacion_html(datos: DatosCotizacion) -> str:
             </thead>
             <tbody>
                 {rows_html}
-                <tr class="total-row">
-                    <td colspan="3" class="text-right"><strong>TOTAL PROPUESTA</strong></td>
-                    <td colspan="2" class="text-right"><strong>{datos.total_formateado} COP</strong></td>
-                </tr>
+                {filas_totales_html}
             </tbody>
         </table>
     </div>
 
-    {seccion_pago_html}
+    {seccion_terminos_html}
 
     <div class="footer-signature">
         <div class="signature-line">{html.escape(datos.emisor)}</div>

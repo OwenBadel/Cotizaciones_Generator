@@ -1,5 +1,6 @@
 """
 Plantilla HTML/CSS de alta fidelidad para Cuenta de Cobro Oficial.
+Soporta retenciones tributarias opcionales (Retefuente, ReteICA) y cálculo neto.
 Autor: Owen Badel Hooker — Ingeniero de Sistemas
 """
 
@@ -31,6 +32,39 @@ def render_cuenta_cobro_html(datos: DatosCuentaCobro, fecha_expedicion: str = No
             <td class="text-right">{item.total_formateado}</td>
         </tr>
         """
+
+    # Filas de liquidación y retenciones
+    filas_liquidacion_html = ""
+    if datos.aplicar_retefuente or datos.aplicar_reteica:
+        filas_liquidacion_html += f"""
+        <tr class="subtotal-row">
+            <td colspan="4" class="text-right">VALOR BRUTO</td>
+            <td class="text-right">{datos.subtotal_bruto_formateado}</td>
+        </tr>
+        """
+
+    if datos.aplicar_retefuente:
+        filas_liquidacion_html += f"""
+        <tr class="discount-row">
+            <td colspan="4" class="text-right">RETENCIÓN EN LA FUENTE ({datos.retefuente_porcentaje:.1f}%)</td>
+            <td class="text-right">-{datos.retefuente_formateado}</td>
+        </tr>
+        """
+
+    if datos.aplicar_reteica:
+        filas_liquidacion_html += f"""
+        <tr class="discount-row">
+            <td colspan="4" class="text-right">RETEICA ({datos.reteica_porcentaje:.3f}%)</td>
+            <td class="text-right">-{datos.reteica_formateado}</td>
+        </tr>
+        """
+
+    filas_liquidacion_html += f"""
+    <tr class="total-row">
+        <td colspan="4" class="text-right">TOTAL NETO A PAGAR</td>
+        <td class="text-right">{datos.total_formateado} COP</td>
+    </tr>
+    """
 
     # Declaración tributaria
     seccion_tributaria_html = ""
@@ -189,6 +223,18 @@ def render_cuenta_cobro_html(datos: DatosCuentaCobro, fecha_expedicion: str = No
     }}
     .text-center {{ text-align: center; }}
     .text-right {{ text-align: right; }}
+    .subtotal-row td {{
+        background-color: #f8fafc !important;
+        font-weight: 600;
+        color: #475569;
+        font-size: 8.5pt;
+    }}
+    .discount-row td {{
+        background-color: #fff1f2 !important;
+        font-weight: 600;
+        color: #be123c;
+        font-size: 8.5pt;
+    }}
     .total-row td {{
         background-color: #e8f1fd !important;
         font-weight: 800;
@@ -340,10 +386,7 @@ def render_cuenta_cobro_html(datos: DatosCuentaCobro, fecha_expedicion: str = No
         </thead>
         <tbody>
             {rows_html}
-            <tr class="total-row">
-                <td colspan="4" class="text-right">TOTAL A PAGAR</td>
-                <td class="text-right">{datos.total_formateado} COP</td>
-            </tr>
+            {filas_liquidacion_html}
         </tbody>
     </table>
     <div class="valor-letras-bar">
