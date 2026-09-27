@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and logs
+*.log
+*.tmp
+.cache/
+
+# Environments
+.env
+.env.local
+.venv/
+env/
+venv/
+ENV/
+
+# Output documents / PDF exports
+*.pdf
+*.xlsx
+!firma.png
+
+# OS generated files
+.DS_Store
+Thumbs.db
